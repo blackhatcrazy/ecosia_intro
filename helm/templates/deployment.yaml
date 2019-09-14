@@ -1,0 +1,56 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Chart.Name }}
+    version: {{ .Chart.Version }}
+spec:
+  replicas: 2
+  # selector:
+  #   matchlabels:
+  #     app: {{ .Chart.Name }}
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
+    spec:
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      containers:
+      - name: {{ .Chart.Name }}
+        image: {{ printf "%s:%s" .Chart.Name  .Chart.Version }}
+        {{- if .Values.minikube }}
+        imagePullPolicy: Never
+        {{- else }}
+        imagePullPolicy: IfNotPresent
+        {{- end }}
+        resources:
+          limits:
+            cpu: 100m
+            memory: 10Mi
+          requests:
+            cpu: 50m
+            memory: 5Mi
+        ports:
+        - containerPort: {{ .Values.port }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: {{ .Values.port }}
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: {{ .Values.port }}
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
