@@ -245,7 +245,7 @@ func runTests(buildDir, minikubeIP string) error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("tests failed. Check existing deployment!\n%s", err)
+		return fmt.Errorf("tests failed. Check existing deployment and run the \"interface_tests\" manually!\n%s", err)
 	}
 	return nil
 }
