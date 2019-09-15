@@ -18,7 +18,17 @@ To build and deploy this service the following tools must be available in the lo
 
 ## Build and deploy the tree-spotter service
 
-To build this app, change directory to `./scripts` and run
+To build this app, the following environment variables must be set
+
+```bash
+export KUBECONFIG="<kubeconfig-path for the minkube>"
+export DOCKER_TLS_VERIFY="<is set by eval $(minikube docker-env)>"  # on windows different
+export DOCKER_HOST="<is set by eval $(minikube docker-env)>"  # on windows different
+export DOCKER_CERT_PATH="<is set by eval $(minikube docker-env)>"  # on windows different
+export MINIKUBE_IP=$(minikube ip) # on windows different
+```
+
+change directory to `./scripts` and run
 
 ```
 go run install.go
