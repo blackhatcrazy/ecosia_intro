@@ -1,2 +1,12 @@
 
 port: 8090
+minikube: true
+
+hotDeployment: blue
+hotVersion: 0.1.0
+
+blueGreen:
+  - colour: blue
+    version: 0.1.0
+  - colour: green
+    version: 0.2.0

@@ -1,16 +1,19 @@
+{{ range $_, $depl := .Values.blueGreen -}}
+---
 apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
-  name: {{ .Chart.Name }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ printf "%s-%s" $.Chart.Name $depl.colour }}
+  namespace: {{ $.Release.Namespace }}
   labels:
-    app: {{ .Chart.Name }}
-    version: {{ .Chart.Version }}
+    app: {{ $.Chart.Name }}
+    colour: {{ $depl.colour }}
+    version: {{ $depl.version }}
 spec:
-  replicas: 2
+  replicas: 1
   # selector:
   #   matchlabels:
-  #     app: {{ .Chart.Name }}
+  #     app: {{ $.Chart.Name }}
   strategy:
     rollingUpdate:
       maxSurge: 25%
@@ -19,18 +22,17 @@ spec:
   template:
     metadata:
       labels:
-        app: {{ .Chart.Name }}
+        app: {{ $.Chart.Name }}
+        colour: {{ $depl.colour }}
+        version: {{ $depl.version }}
     spec:
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       containers:
-      - name: {{ .Chart.Name }}
-        image: {{ printf "%s:%s" .Chart.Name  .Chart.Version }}
-        {{- if .Values.minikube }}
-        imagePullPolicy: Never
-        {{- else }}
+      - name: {{ $.Chart.Name }}
+        image: {{ printf "%s:%s" $.Chart.Name  $depl.version }}
+        # must be set to Never or IfNotPresent to work with local minikube
         imagePullPolicy: IfNotPresent
-        {{- end }}
         resources:
           limits:
             cpu: 100m
@@ -39,18 +41,19 @@ spec:
             cpu: 50m
             memory: 5Mi
         ports:
-        - containerPort: {{ .Values.port }}
+        - containerPort: {{ $.Values.port }}
         livenessProbe:
           httpGet:
             path: /healthz
-            port: {{ .Values.port }}
+            port: {{ $.Values.port }}
             scheme: HTTP
           initialDelaySeconds: 5
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /healthz
-            port: {{ .Values.port }}
+            port: {{ $.Values.port }}
             scheme: HTTP
           initialDelaySeconds: 5
           periodSeconds: 10
+{{ end }}

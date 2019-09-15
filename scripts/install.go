@@ -1,22 +1,24 @@
 package main
 
 import (
-	"bufio"
+	"dev/ecosia_intro/scripts/helm"
+	"dev/ecosia_intro/scripts/process"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
+
+	// TODO: trade log for logrus
 	// log "github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v2"
 )
 
 const (
-	binName = "tree-spotter"
-	// TODO: pull version from chart and add validate version logic
-	version   = "0.1.0"
-	namespace = "jan"
-
+	binName    = "tree-spotter"
+	namespace  = "jan"
+	helmFolder = "helm"
 	dockerfile = "Dockerfile"
 )
 
@@ -30,22 +32,32 @@ func main() {
 	dockerEnv, kubeconfig, minikubeIP, err := readEnvVars()
 	check(err)
 
-	// TODO read flags
-
 	cwd, err := os.Getwd()
 	check(err)
 	check(os.Chdir(fmt.Sprintf("%s/../", cwd)))
 
 	buildDir, err := os.Getwd()
+
+	version, err := loadVersion(fmt.Sprintf("%s/%s", buildDir, helmFolder))
 	check(err)
+
+	err = validateVersion(dockerEnv, binName, version)
+	// TODO switch back on
+	// if err != nil {
+	// 	check(fmt.Errorf(
+	// 		"%s\nThe app version is defined in \"%s/%s/Chart.yaml\" in the Version field",
+	// 		err, buildDir, helmFolder))
+	// }
 
 	check(build(buildDir))
 	fmt.Println("")
 
-	check(dockerBuild(dockerEnv))
+	check(dockerBuild(dockerEnv, version))
 	fmt.Println("")
 
-	check(helmDeploy(kubeconfig, buildDir))
+	h := helm.New(kubeconfig, buildDir, namespace, binName)
+
+	check(h.Deploy())
 	fmt.Println("")
 
 	time.Sleep(10 * time.Second)
@@ -81,11 +93,71 @@ The env variables \"DOCKER_TLS_VERIFY\", \"DOCKER_HOST\" and \"DOCKER_CERT_PATH\
 	return d, kc, ip, nil
 }
 
+func loadVersion(helmFolder string) (string, error) {
+	f, err := ioutil.ReadFile(fmt.Sprintf("%s/Chart.yaml", helmFolder))
+	if err != nil {
+		return "",
+			fmt.Errorf("[ERROR] read file \"%s\" error: \"%v\"", helmFolder, err)
+	}
+	version := struct{ Version string }{}
+	err = yaml.Unmarshal(f, &version)
+	if err != nil {
+		return "",
+			fmt.Errorf("[ERROR] unmarshal file \"%s\" error: \"%v\"", helmFolder, err)
+	}
+	return version.Version, nil
+}
+
+func collectVersionsLocalDocker(d docker, imageName string) ([]string, error) {
+
+	out, err := process.RunEnvRes(
+		map[string]string{
+			"DOCKER_TLS_VERIFY": d.TLSverify,
+			"DOCKER_HOST":       d.Host,
+			"DOCKER_CERT_PATH":  d.CertPath,
+		},
+		[]string{"docker", "images", imageName},
+	)
+	if err != nil {
+		return []string{}, fmt.Errorf("load docker images error %s", err)
+	}
+
+	result := []string{}
+	outLines := strings.Split(out, "\n")
+	for _, line := range outLines {
+		words := strings.Fields(line)
+		if len(words) < 5 {
+			continue
+		}
+		if words[0] == imageName {
+			result = append(result, words[1])
+		}
+	}
+	return result, nil
+}
+
+func validateVersion(d docker, imageName, version string) error {
+	existingVersions, err := collectVersionsLocalDocker(d, imageName)
+	if err != nil {
+		return err
+	}
+	for _, exists := range existingVersions {
+		if strings.Compare(version, exists) == 0 {
+			return fmt.Errorf(
+				"[ERROR] version \"%s\" already exists. The following versions exist \n %v",
+				version,
+				existingVersions,
+			)
+		}
+	}
+	return nil
+}
+
 func build(buildDir string) error {
-	logInfo("BUILD", fmt.Sprintf("building go app in %s", buildDir))
+	process.LogInfo("BUILD", fmt.Sprintf("building go app in %s", buildDir))
 
 	// Build a statically linked binary that can live in a scratch container
-	err := runEnv(
+	err := process.RunEnv(
 		"BUILD",
 		map[string]string{"CGO_ENABLED": "0", "GOOS": "linux"},
 		[]string{"go", "build", "-a", "-installsuffix", "cgo", "-o", binName, "."},
@@ -93,9 +165,9 @@ func build(buildDir string) error {
 	if err != nil {
 		return err
 	}
-	logInfo("BUILD", "success")
+	process.LogInfo("BUILD", "success")
 
-	err = runEnv(
+	err = process.RunEnv(
 		"MOVE",
 		map[string]string{},
 		[]string{"mv", binName, "./app"},
@@ -106,8 +178,8 @@ func build(buildDir string) error {
 	return nil
 }
 
-func dockerBuild(d docker) error {
-	return runEnv(
+func dockerBuild(d docker, version string) error {
+	return process.RunEnv(
 		"DOCKER",
 		map[string]string{
 			"DOCKER_TLS_VERIFY": d.TLSverify,
@@ -121,45 +193,8 @@ func dockerBuild(d docker) error {
 	)
 }
 
-func helmDeploy(kubeconfig, buildDir string) error {
-	// create namespace if it does not exist
-	err := runEnv(
-		"HELM3",
-		map[string]string{"KUBECONFIG": kubeconfig},
-		[]string{"kubectl", "get", "namespace", namespace},
-	)
-	if err != nil {
-		e := runEnv(
-			"HELM3",
-			map[string]string{"KUBECONFIG": kubeconfig},
-			[]string{"kubectl", "create", "namespace", namespace},
-		)
-		if e != nil {
-			return fmt.Errorf(
-				"failed to create namespace \"%s\" with kubeconfig \"%s\" - error: \"%s\"",
-				namespace, kubeconfig, e)
-		}
-	}
-
-	// Install service via helm binary (version v3.0.0-beta.3)
-	// From version v3 onwards helm does not require tiller in cluster anymore
-	return runEnv(
-		"HELM3",
-		map[string]string{
-			"KUBECONFIG": kubeconfig,
-		},
-		[]string{fmt.Sprintf("%s/binaries/helm", buildDir),
-			"upgrade", fmt.Sprintf("%s-%s", namespace, binName),
-			"./helm",
-			"--install",
-			"--recreate-pods",
-			"--namespace", namespace,
-		},
-	)
-}
-
 func runTests(buildDir, minikubeIP string) error {
-	err := runEnv(
+	err := process.RunEnv(
 		"TEST",
 		map[string]string{
 			"MINIKUBE_IP": minikubeIP,
@@ -172,49 +207,8 @@ func runTests(buildDir, minikubeIP string) error {
 	return nil
 }
 
-// runEnv executes a given command in a subprocess and pipes all occurring outputs
-// to stdout. It breaks on errors (from stderr)
-func runEnv(prefix string, envVars map[string]string, cmd []string) error {
-	if len(cmd) == 0 {
-		return fmt.Errorf("command length is zero")
-	}
-
-	c := exec.Command(cmd[0], cmd[1:]...)
-	c.Env = os.Environ()
-	for name, value := range envVars {
-		c.Env = append(c.Env, fmt.Sprintf("%s=%s", name, value))
-	}
-
-	cReader, err := c.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf(
-			"error \"%s\" creating StdoutPipe for cmd: \"%s\"",
-			err, strings.Join(cmd, " "))
-	}
-
-	scanner := bufio.NewScanner(cReader)
-	go func() {
-		for scanner.Scan() {
-			logInfo(prefix, scanner.Text())
-		}
-	}()
-	err = c.Start()
-	if err != nil {
-		return fmt.Errorf("error \"%s\" starting cmd \"%s\"", err, strings.Join(cmd, " "))
-	}
-	err = c.Wait()
-	if err != nil {
-		return fmt.Errorf("error \"%s\" waiting for cmd \"%s\"", err, strings.Join(cmd, " "))
-	}
-	return nil
-}
-
 func check(err error) {
 	if err != nil {
 		log.Fatal(err)
 	}
-}
-
-func logInfo(prefix, entry string) {
-	log.Printf("%s | %s", prefix, entry)
 }
