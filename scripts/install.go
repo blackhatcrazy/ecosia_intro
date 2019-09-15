@@ -3,20 +3,22 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	// TODO: trade log for logrus
 	// log "github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v2"
 )
 
 const (
-	binName = "tree-spotter"
-	// TODO: pull version from chart and add validate version logic
-	version   = "0.1.0"
-	namespace = "jan"
-
+	binName    = "tree-spotter"
+	namespace  = "jan"
+	helmFolder = "helm"
 	dockerfile = "Dockerfile"
 )
 
@@ -30,19 +32,26 @@ func main() {
 	dockerEnv, kubeconfig, minikubeIP, err := readEnvVars()
 	check(err)
 
-	// TODO read flags
-
 	cwd, err := os.Getwd()
 	check(err)
 	check(os.Chdir(fmt.Sprintf("%s/../", cwd)))
 
 	buildDir, err := os.Getwd()
+
+	version, err := loadVersion(fmt.Sprintf("%s/%s", buildDir, helmFolder))
 	check(err)
+
+	err = validateVersion(dockerEnv, binName, version)
+	if err != nil {
+		check(fmt.Errorf(
+			"%s\nThe app version is defined in \"%s/%s/Chart.yaml\" in the Version field",
+			err, buildDir, helmFolder))
+	}
 
 	check(build(buildDir))
 	fmt.Println("")
 
-	check(dockerBuild(dockerEnv))
+	check(dockerBuild(dockerEnv, version))
 	fmt.Println("")
 
 	check(helmDeploy(kubeconfig, buildDir))
@@ -81,6 +90,66 @@ The env variables \"DOCKER_TLS_VERIFY\", \"DOCKER_HOST\" and \"DOCKER_CERT_PATH\
 	return d, kc, ip, nil
 }
 
+func loadVersion(helmFolder string) (string, error) {
+	f, err := ioutil.ReadFile(fmt.Sprintf("%s/Chart.yaml", helmFolder))
+	if err != nil {
+		return "",
+			fmt.Errorf("[ERROR] read file \"%s\" error: \"%v\"", helmFolder, err)
+	}
+	version := struct{ Version string }{}
+	err = yaml.Unmarshal(f, &version)
+	if err != nil {
+		return "",
+			fmt.Errorf("[ERROR] unmarshal file \"%s\" error: \"%v\"", helmFolder, err)
+	}
+	return version.Version, nil
+}
+
+func collectVersionsLocalDocker(d docker, imageName string) ([]string, error) {
+
+	out, err := runEnvRes(
+		map[string]string{
+			"DOCKER_TLS_VERIFY": d.TLSverify,
+			"DOCKER_HOST":       d.Host,
+			"DOCKER_CERT_PATH":  d.CertPath,
+		},
+		[]string{"docker", "images", imageName},
+	)
+	if err != nil {
+		return []string{}, fmt.Errorf("load docker images error %s", err)
+	}
+
+	result := []string{}
+	outLines := strings.Split(out, "\n")
+	for _, line := range outLines {
+		words := strings.Fields(line)
+		if len(words) < 5 {
+			continue
+		}
+		if words[0] == imageName {
+			result = append(result, words[1])
+		}
+	}
+	return result, nil
+}
+
+func validateVersion(d docker, imageName, version string) error {
+	existingVersions, err := collectVersionsLocalDocker(d, imageName)
+	if err != nil {
+		return err
+	}
+	for _, exists := range existingVersions {
+		if strings.Compare(version, exists) == 0 {
+			return fmt.Errorf(
+				"[ERROR] version \"%s\" already exists. The following versions exist \n %v",
+				version,
+				existingVersions,
+			)
+		}
+	}
+	return nil
+}
+
 func build(buildDir string) error {
 	logInfo("BUILD", fmt.Sprintf("building go app in %s", buildDir))
 
@@ -106,7 +175,7 @@ func build(buildDir string) error {
 	return nil
 }
 
-func dockerBuild(d docker) error {
+func dockerBuild(d docker, version string) error {
 	return runEnv(
 		"DOCKER",
 		map[string]string{
@@ -121,24 +190,30 @@ func dockerBuild(d docker) error {
 	)
 }
 
-func helmDeploy(kubeconfig, buildDir string) error {
-	// create namespace if it does not exist
+func ensureNamespace(kubeconfig string) error {
+	kcEnv := map[string]string{"KUBECONFIG": kubeconfig}
 	err := runEnv(
-		"HELM3",
-		map[string]string{"KUBECONFIG": kubeconfig},
-		[]string{"kubectl", "get", "namespace", namespace},
+		"HELM3", kcEnv, []string{"kubectl", "get", "namespace", namespace},
 	)
+
 	if err != nil {
 		e := runEnv(
-			"HELM3",
-			map[string]string{"KUBECONFIG": kubeconfig},
-			[]string{"kubectl", "create", "namespace", namespace},
+			"HELM3", kcEnv, []string{"kubectl", "create", "namespace", namespace},
 		)
 		if e != nil {
 			return fmt.Errorf(
 				"failed to create namespace \"%s\" with kubeconfig \"%s\" - error: \"%s\"",
 				namespace, kubeconfig, e)
 		}
+	}
+	return nil
+}
+
+func helmDeploy(kubeconfig, buildDir string) error {
+	// create namespace if it does not exist
+	err := ensureNamespace(kubeconfig)
+	if err != nil {
+		return err
 	}
 
 	// Install service via helm binary (version v3.0.0-beta.3)
@@ -150,10 +225,10 @@ func helmDeploy(kubeconfig, buildDir string) error {
 		},
 		[]string{fmt.Sprintf("%s/binaries/helm", buildDir),
 			"upgrade", fmt.Sprintf("%s-%s", namespace, binName),
-			"./helm",
+			fmt.Sprintf("%s/helm", buildDir),
 			"--install",
-			"--recreate-pods",
 			"--namespace", namespace,
+			"--recreate-pods",
 		},
 	)
 }
@@ -164,7 +239,10 @@ func runTests(buildDir, minikubeIP string) error {
 		map[string]string{
 			"MINIKUBE_IP": minikubeIP,
 		},
-		[]string{"go", "test", fmt.Sprintf("%s/interface_tests/...", buildDir)},
+		[]string{"go", "test",
+			fmt.Sprintf("%s/interface_tests/...", buildDir),
+			"-count", "1",
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("tests failed. Check existing deployment!\n%s", err)
@@ -207,6 +285,29 @@ func runEnv(prefix string, envVars map[string]string, cmd []string) error {
 		return fmt.Errorf("error \"%s\" waiting for cmd \"%s\"", err, strings.Join(cmd, " "))
 	}
 	return nil
+}
+
+// runEnvRes executes a given command in a subprocess and returns the result.
+// It breaks on errors (from stderr) and returns the error.
+func runEnvRes(envVars map[string]string, cmd []string) (
+	string, error,
+) {
+	if len(cmd) == 0 {
+		return "", fmt.Errorf("command length is zero")
+	}
+
+	c := exec.Command(cmd[0], cmd[1:]...)
+	c.Env = os.Environ()
+	for name, value := range envVars {
+		c.Env = append(c.Env, fmt.Sprintf("%s=%s", name, value))
+	}
+
+	outErrB, err := c.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("cmd \"%s\" failed - status code \"%s\", msg \"%s\"",
+			cmd, err, string(outErrB))
+	}
+	return string(outErrB), nil
 }
 
 func check(err error) {
