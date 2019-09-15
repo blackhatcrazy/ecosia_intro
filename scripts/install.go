@@ -57,7 +57,6 @@ func main() {
 	check(helmDeploy(kubeconfig, buildDir))
 	fmt.Println("")
 
-	time.Sleep(10 * time.Second)
 	check(runTests(buildDir, minikubeIP))
 	fmt.Println("")
 
@@ -234,6 +233,7 @@ func helmDeploy(kubeconfig, buildDir string) error {
 }
 
 func runTests(buildDir, minikubeIP string) error {
+	time.Sleep(10 * time.Second)
 	err := runEnv(
 		"TEST",
 		map[string]string{
