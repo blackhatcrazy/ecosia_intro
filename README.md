@@ -37,10 +37,19 @@ go run install.go
 Per default this will create the tree-spotter app in the namespace `jan`.
 It can be seen from the `helm3` cli by calling `./binaries/helm list -n jan`.
 
+The running homepage can now be reached under 
+
+```curl ${MINIKUBE_IP}/tree -H Host:local.ecosia.org```
+
 ## Purge the app
 
 To purge the app run either of the following commands
 
 - `helm del jan-tree-spotter --namespace jan`
 - `kubectl delete namespace jan`
+
+Deleting the docker images (only after purging the app)
+
+- `docker rmi -f $(docker images | grep 'tree-spotter')`
+
 
