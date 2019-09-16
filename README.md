@@ -3,7 +3,8 @@
 This app provides a kubernetes service `tree-spotter` in a local minikube cluster that returns
 my favorite tree when called like
 ```bash
-curl <clusterIP>/tree -H Host:local.ecosia.org
+curl ${MINIKUBE_IP}/tree -H Host:local.ecosia.org
+curl localhost:7000/tree -H Host:local.ecosia.org
 ```
 
 ## Prerequisites
