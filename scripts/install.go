@@ -266,7 +266,7 @@ func helmDeploy(kubeconfig, helmBin, buildDir string) error {
 }
 
 func runTests(buildDir, minikubeIP string) error {
-	time.Sleep(10 * time.Second)
+	time.Sleep(15 * time.Second)
 	err := runEnv(
 		"TEST",
 		map[string]string{
