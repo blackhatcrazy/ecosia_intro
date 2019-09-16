@@ -232,7 +232,7 @@ func helmDeploy(kubeconfig, helmBin, buildDir string) error {
 		return err
 	}
 
-	// Install service via helm binary (version v3.0.0-beta.3)
+	// Install service via helm binary (version v3.0.0-beta.2)
 	// From version v3 onwards helm does not require tiller in cluster anymore
 	return runEnv(
 		"HELM3",
@@ -247,6 +247,22 @@ func helmDeploy(kubeconfig, helmBin, buildDir string) error {
 			"--recreate-pods",
 		},
 	)
+	// preferably this should be done using the alpine/helm docker image.
+	// the relevant command has the form (replacing proper variables)
+	// docker run -ti --rm \
+	// -e KUBECONFIG="$HOME/.kube/config" \
+	// -e DOCKER_TLS_VERIFY="1" \
+	// -e DOCKER_HOST="tcp://192.168.0.11:2376" \
+	// -e DOCKER_CERT_PATH="/mnt/c/wslConfigs/.minikube/certs" \
+	// --bind $(pwd):/apps \
+	// -v $HOME/.kube:/root/.kube \
+	// -v $HOME/.helm:/root/.helm \
+	// alpine/helm:3.0.0-beta.2 \
+	// install /apps/helm test \
+	// upgrade jan-tree-spotter /apps/helm \
+	// --install \
+	// --namespace jan \
+	// --recreate-pods
 }
 
 func runTests(buildDir, minikubeIP string) error {
