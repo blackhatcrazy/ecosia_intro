@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -28,8 +29,24 @@ type docker struct {
 	CertPath  string
 }
 
+func selectHelmBinary() (string, error) {
+	switch os := runtime.GOOS; os {
+	case "darwin":
+		return "darwin.amd64", nil
+	case "linux":
+		return "", nil
+	case "windows":
+		return ".exe", nil
+	default:
+		return "", fmt.Errorf("operating system %s is not supported", os)
+	}
+}
+
 func main() {
 	dockerEnv, kubeconfig, minikubeIP, err := readEnvVars()
+	check(err)
+
+	helmBin, err := selectHelmBinary()
 	check(err)
 
 	cwd, err := os.Getwd()
@@ -54,7 +71,7 @@ func main() {
 	check(dockerBuild(dockerEnv, version))
 	fmt.Println("")
 
-	check(helmDeploy(kubeconfig, buildDir))
+	check(helmDeploy(kubeconfig, helmBin, buildDir))
 	fmt.Println("")
 
 	check(runTests(buildDir, minikubeIP))
@@ -208,7 +225,7 @@ func ensureNamespace(kubeconfig string) error {
 	return nil
 }
 
-func helmDeploy(kubeconfig, buildDir string) error {
+func helmDeploy(kubeconfig, helmBin, buildDir string) error {
 	// create namespace if it does not exist
 	err := ensureNamespace(kubeconfig)
 	if err != nil {
@@ -222,7 +239,7 @@ func helmDeploy(kubeconfig, buildDir string) error {
 		map[string]string{
 			"KUBECONFIG": kubeconfig,
 		},
-		[]string{fmt.Sprintf("%s/binaries/helm", buildDir),
+		[]string{fmt.Sprintf("%s/binaries/helm3%s", buildDir, helmBin),
 			"upgrade", fmt.Sprintf("%s-%s", namespace, binName),
 			fmt.Sprintf("%s/helm", buildDir),
 			"--install",
