@@ -180,13 +180,13 @@ func build(buildDir string) error {
 	}
 	logInfo("BUILD", "success")
 
-	err = runEnv(
-		"MOVE",
-		map[string]string{},
-		[]string{"mv", binName, "./app"},
+	err = os.Rename(
+		fmt.Sprintf("%s/%s", buildDir, binName),
+		fmt.Sprintf("%s/app/%s", buildDir, binName),
 	)
+
 	if err != nil {
-		return err
+		return fmt.Errorf("[ERROR] failed to move executable")
 	}
 	return nil
 }

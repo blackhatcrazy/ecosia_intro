@@ -14,7 +14,6 @@ To build and deploy this service the following tools must be available in the lo
 - docker >= 19.03.2 (probably also fine with lower versions but untested)
 - minikube >= 1.3.1 (probably also fine with lower versions but untested)
 - go >= 1.13 (probably also fine with lower versions but untested)
-- mv command
 - alpine:3.10.2 or docker access to the internet 
 
 ## Build and deploy the tree-spotter service
